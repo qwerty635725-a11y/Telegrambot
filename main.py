@@ -1,103 +1,140 @@
 import os
-from aiogram import Bot, Dispatcher, executor, types
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
-from aiogram.dispatcher.filters.state import State, StatesGroup
-from aiogram.dispatcher import FSMContext
+import subprocess
+import tempfile
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-OWNER_ID = int(os.getenv("OWNER_ID"))
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    ContextTypes,
+    filters
+)
 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(bot, storage=MemoryStorage())
+# 🔐 берём токен из Railway Variables
+TOKEN = os.getenv("BOT_TOKEN")
 
-# ---------- СОСТОЯНИЯ ----------
-class MenuState(StatesGroup):
-    scripts = State()
-    files = State()
-    tgk = State()
+if not TOKEN:
+    raise RuntimeError("BOT_TOKEN не найден в переменных окружения")
 
-# ---------- КНОПКИ ----------
-main_menu = types.ReplyKeyboardMarkup(resize_keyboard=True)
-main_menu.add("📂 Каталог скриптов", "📁 Полезные файлы")
-main_menu.add("📢 Полезные ТГК", "👤 Обо мне")
+user_lang = {}
 
-sub_menu = types.ReplyKeyboardMarkup(resize_keyboard=True)
-sub_menu.add("Пусто 1", "Пусто 2", "Пусто 3")
-sub_menu.add("Пусто 4", "Пусто 5", "Пусто 6")
-sub_menu.add("⬅️ Назад")
+MAX_CODE_LENGTH = 2000
+TIMEOUT = 3
 
-# ---------- START ----------
-@dp.message_handler(commands="start")
-async def start(message: types.Message):
-    await message.answer_photo(
-        photo=open("start.jpg", "rb"),
-        caption="👋 Добро пожаловать",
-        reply_markup=main_menu
+FORBIDDEN = [
+    "import os", "import sys", "subprocess",
+    "open(", "exec", "eval", "__",
+    "fork", "while True"
+]
+
+# /start
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [
+            InlineKeyboardButton("🐍 Python", callback_data="python"),
+            InlineKeyboardButton("🟨 JavaScript", callback_data="js"),
+        ],
+        [
+            InlineKeyboardButton("⚙️ C++", callback_data="cpp")
+        ]
+    ]
+
+    await update.message.reply_text(
+        "Выбери язык программирования:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-# ---------- РАЗДЕЛЫ ----------
-@dp.message_handler(text="📂 Каталог скриптов")
-async def scripts(message: types.Message):
-    await MenuState.scripts.set()
-    await message.answer("📂 Каталог скриптов", reply_markup=sub_menu)
+# выбор языка
+async def choose_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
 
-@dp.message_handler(text="📁 Полезные файлы")
-async def files(message: types.Message):
-    await MenuState.files.set()
-    await message.answer("📁 Полезные файлы", reply_markup=sub_menu)
+    user_lang[query.from_user.id] = query.data
 
-@dp.message_handler(text="📢 Полезные ТГК")
-async def tgk(message: types.Message):
-    await MenuState.tgk.set()
-    await message.answer("📢 Полезные ТГК", reply_markup=sub_menu)
+    await query.message.reply_text(
+        f"✅ Язык выбран: {query.data.upper()}\nТеперь отправь код."
+    )
 
-@dp.message_handler(text="👤 Обо мне")
-async def about(message: types.Message):
-    await message.answer("👤 Создатель: @ego_njw")
+def is_safe(code: str) -> bool:
+    if len(code) > MAX_CODE_LENGTH:
+        return False
+    return not any(bad in code for bad in FORBIDDEN)
 
-# ---------- НАЗАД ----------
-@dp.message_handler(text="⬅️ Назад", state="*")
-async def back(message: types.Message, state: FSMContext):
-    await state.finish()
-    await message.answer("Главное меню", reply_markup=main_menu)
+# выполнение кода
+async def run_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    code = update.message.text
+    lang = user_lang.get(user_id)
 
-# ---------- ПУСТЫЕ КНОПКИ ----------
-@dp.message_handler(lambda m: m.text.startswith("Пусто"), state=MenuState.scripts)
-async def scripts_text(message: types.Message):
-    texts = {
-        "Пусто 1": "Скрипт 1",
-        "Пусто 2": "Скрипт 2",
-        "Пусто 3": "Скрипт 3",
-        "Пусто 4": "Скрипт 4",
-        "Пусто 5": "Скрипт 5",
-        "Пусто 6": "Скрипт 6",
-    }
-    await message.answer(texts[message.text])
+    if not lang:
+        await update.message.reply_text("❗ Сначала выбери язык через /start")
+        return
 
-@dp.message_handler(lambda m: m.text.startswith("Пусто"), state=MenuState.files)
-async def files_text(message: types.Message):
-    texts = {
-        "Пусто 1": "Файл 1",
-        "Пусто 2": "Файл 2",
-        "Пусто 3": "Файл 3",
-        "Пусто 4": "Файл 4",
-        "Пусто 5": "Файл 5",
-        "Пусто 6": "Файл 6",
-    }
-    await message.answer(texts[message.text])
+    if not is_safe(code):
+        await update.message.reply_text("⛔ Код отклонён (опасный или слишком большой)")
+        return
 
-@dp.message_handler(lambda m: m.text.startswith("Пусто"), state=MenuState.tgk)
-async def tgk_text(message: types.Message):
-    texts = {
-        "Пусто 1": "https://t.me/channel1",
-        "Пусто 2": "https://t.me/channel2",
-        "Пусто 3": "https://t.me/channel3",
-        "Пусто 4": "https://t.me/channel4",
-        "Пусто 5": "https://t.me/channel5",
-        "Пусто 6": "https://t.me/channel6",
-    }
-    await message.answer(texts[message.text])
+    try:
+        if lang == "python":
+            result = subprocess.run(
+                ["python3", "-c", code],
+                capture_output=True,
+                text=True,
+                timeout=TIMEOUT
+            )
 
-# ---------- RUN ----------
+        elif lang == "js":
+            result = subprocess.run(
+                ["node", "-e", code],
+                capture_output=True,
+                text=True,
+                timeout=TIMEOUT
+            )
+
+        elif lang == "cpp":
+            with tempfile.TemporaryDirectory() as tmp:
+                cpp = os.path.join(tmp, "main.cpp")
+                exe = os.path.join(tmp, "a.out")
+
+                with open(cpp, "w") as f:
+                    f.write(code)
+
+                compile = subprocess.run(
+                    ["g++", cpp, "-O2", "-o", exe],
+                    capture_output=True,
+                    text=True,
+                    timeout=TIMEOUT
+                )
+
+                if compile.returncode != 0:
+                    await update.message.reply_text("❌ Ошибка компиляции:\n" + compile.stderr)
+                    return
+
+                result = subprocess.run(
+                    [exe],
+                    capture_output=True,
+                    text=True,
+                    timeout=TIMEOUT
+                )
+
+        output = result.stdout or result.stderr or "Нет вывода"
+        await update.message.reply_text(f"📤 Результат:\n{output}")
+
+    except subprocess.TimeoutExpired:
+        await update.message.reply_text("⏱ Превышено время выполнения")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка: {e}")
+
+def main():
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(choose_lang))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, run_code))
+
+    app.run_polling()
+
 if __name__ == "__main__":
-    executor.start_polling(dp, skip_updates=True)
+    main()
