@@ -1,94 +1,103 @@
 import os
-import logging
 from aiogram import Bot, Dispatcher, executor, types
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.dispatcher.filters.state import State, StatesGroup
+from aiogram.dispatcher import FSMContext
 
-# --- ENV ---
-TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+OWNER_ID = int(os.getenv("OWNER_ID"))
 
-logging.basicConfig(level=logging.INFO)
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher(bot, storage=MemoryStorage())
 
-bot = Bot(token=TOKEN)
-dp = Dispatcher(bot)
+# ---------- СОСТОЯНИЯ ----------
+class MenuState(StatesGroup):
+    scripts = State()
+    files = State()
+    tgk = State()
 
-# --- Главное меню ---
-main_menu = ReplyKeyboardMarkup(resize_keyboard=True)
-main_menu.add(
-    KeyboardButton("📂 Каталог скриптов"),
-    KeyboardButton("📁 Полезные файлы")
-)
-main_menu.add(
-    KeyboardButton("📢 Полезные ТГК"),
-    KeyboardButton("👤 Обо мне")
-)
+# ---------- КНОПКИ ----------
+main_menu = types.ReplyKeyboardMarkup(resize_keyboard=True)
+main_menu.add("📂 Каталог скриптов", "📁 Полезные файлы")
+main_menu.add("📢 Полезные ТГК", "👤 Обо мне")
 
-# --- Подменю (6 кнопок) ---
-sub_menu = ReplyKeyboardMarkup(resize_keyboard=True)
-sub_menu.add(
-    KeyboardButton("Пусто 1"),
-    KeyboardButton("Пусто 2"),
-    KeyboardButton("Пусто 3")
-)
-sub_menu.add(
-    KeyboardButton("Пусто 4"),
-    KeyboardButton("Пусто 5"),
-    KeyboardButton("Пусто 6")
-)
-sub_menu.add(KeyboardButton("⬅️ Назад"))
+sub_menu = types.ReplyKeyboardMarkup(resize_keyboard=True)
+sub_menu.add("Пусто 1", "Пусто 2", "Пусто 3")
+sub_menu.add("Пусто 4", "Пусто 5", "Пусто 6")
+sub_menu.add("⬅️ Назад")
 
-# --- START ---
-@dp.message_handler(commands=["start"])
+# ---------- START ----------
+@dp.message_handler(commands="start")
 async def start(message: types.Message):
-    with open("start.jpg", "rb") as photo:
-        await message.answer_photo(
-            photo=photo,
-            caption="👋 Привет! Добро пожаловать в бота со скриптами.",
-            reply_markup=main_menu
-        )
+    await message.answer_photo(
+        photo=open("start.jpg", "rb"),
+        caption="👋 Добро пожаловать",
+        reply_markup=main_menu
+    )
 
-# --- Главное меню ---
+# ---------- РАЗДЕЛЫ ----------
 @dp.message_handler(text="📂 Каталог скриптов")
 async def scripts(message: types.Message):
-    await message.answer("📂 Каталог скриптов:", reply_markup=sub_menu)
+    await MenuState.scripts.set()
+    await message.answer("📂 Каталог скриптов", reply_markup=sub_menu)
 
 @dp.message_handler(text="📁 Полезные файлы")
 async def files(message: types.Message):
-    await message.answer("📁 Полезные файлы:", reply_markup=sub_menu)
+    await MenuState.files.set()
+    await message.answer("📁 Полезные файлы", reply_markup=sub_menu)
 
 @dp.message_handler(text="📢 Полезные ТГК")
 async def tgk(message: types.Message):
-    await message.answer("📢 Полезные ТГК:", reply_markup=sub_menu)
+    await MenuState.tgk.set()
+    await message.answer("📢 Полезные ТГК", reply_markup=sub_menu)
 
 @dp.message_handler(text="👤 Обо мне")
 async def about(message: types.Message):
-    await message.answer("👤 Создатель:\n@ego_njw")
+    await message.answer("👤 Создатель: @ego_njw")
 
-# --- Назад ---
-@dp.message_handler(text="⬅️ Назад")
-async def back(message: types.Message):
-    await message.answer("Главное меню:", reply_markup=main_menu)
+# ---------- НАЗАД ----------
+@dp.message_handler(text="⬅️ Назад", state="*")
+async def back(message: types.Message, state: FSMContext):
+    await state.finish()
+    await message.answer("Главное меню", reply_markup=main_menu)
 
-# --- Кнопки ПУСТО ---
-@dp.message_handler(lambda m: m.text.startswith("Пусто"))
-async def empty(message: types.Message):
+# ---------- ПУСТЫЕ КНОПКИ ----------
+@dp.message_handler(lambda m: m.text.startswith("Пусто"), state=MenuState.scripts)
+async def scripts_text(message: types.Message):
     texts = {
-        "Пусто 1": "ТЕКСТ СКРИПТА 1",
-        "Пусто 2": "ТЕКСТ СКРИПТА 2",
-        "Пусто 3": "ТЕКСТ СКРИПТА 3",
-        "Пусто 4": "ТЕКСТ СКРИПТА 4",
-        "Пусто 5": "ТЕКСТ СКРИПТА 5",
-        "Пусто 6": "ТЕКСТ СКРИПТА 6",
+        "Пусто 1": "Скрипт 1",
+        "Пусто 2": "Скрипт 2",
+        "Пусто 3": "Скрипт 3",
+        "Пусто 4": "Скрипт 4",
+        "Пусто 5": "Скрипт 5",
+        "Пусто 6": "Скрипт 6",
     }
-    await message.answer(texts.get(message.text, "Пусто"))
+    await message.answer(texts[message.text])
 
-# --- Уведомление админу при старте ---
-@dp.message_handler(commands=["admin"])
-async def admin(message: types.Message):
-    if message.from_user.id == ADMIN_ID:
-        await message.answer("✅ Админ доступ подтверждён")
-    else:
-        await message.answer("⛔ Нет доступа")
+@dp.message_handler(lambda m: m.text.startswith("Пусто"), state=MenuState.files)
+async def files_text(message: types.Message):
+    texts = {
+        "Пусто 1": "Файл 1",
+        "Пусто 2": "Файл 2",
+        "Пусто 3": "Файл 3",
+        "Пусто 4": "Файл 4",
+        "Пусто 5": "Файл 5",
+        "Пусто 6": "Файл 6",
+    }
+    await message.answer(texts[message.text])
 
+@dp.message_handler(lambda m: m.text.startswith("Пусто"), state=MenuState.tgk)
+async def tgk_text(message: types.Message):
+    texts = {
+        "Пусто 1": "https://t.me/channel1",
+        "Пусто 2": "https://t.me/channel2",
+        "Пусто 3": "https://t.me/channel3",
+        "Пусто 4": "https://t.me/channel4",
+        "Пусто 5": "https://t.me/channel5",
+        "Пусто 6": "https://t.me/channel6",
+    }
+    await message.answer(texts[message.text])
+
+# ---------- RUN ----------
 if __name__ == "__main__":
     executor.start_polling(dp, skip_updates=True)
