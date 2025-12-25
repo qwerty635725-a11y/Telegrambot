@@ -3,7 +3,9 @@ import logging
 from aiogram import Bot, Dispatcher, executor, types
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
+# --- ENV ---
 TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
 logging.basicConfig(level=logging.INFO)
 
@@ -35,7 +37,7 @@ sub_menu.add(
 )
 sub_menu.add(KeyboardButton("⬅️ Назад"))
 
-# --- Старт ---
+# --- START ---
 @dp.message_handler(commands=["start"])
 async def start(message: types.Message):
     with open("start.jpg", "rb") as photo:
@@ -47,38 +49,46 @@ async def start(message: types.Message):
 
 # --- Главное меню ---
 @dp.message_handler(text="📂 Каталог скриптов")
-async def scripts_menu(message: types.Message):
+async def scripts(message: types.Message):
     await message.answer("📂 Каталог скриптов:", reply_markup=sub_menu)
 
 @dp.message_handler(text="📁 Полезные файлы")
-async def files_menu(message: types.Message):
+async def files(message: types.Message):
     await message.answer("📁 Полезные файлы:", reply_markup=sub_menu)
 
 @dp.message_handler(text="📢 Полезные ТГК")
-async def tgk_menu(message: types.Message):
+async def tgk(message: types.Message):
     await message.answer("📢 Полезные ТГК:", reply_markup=sub_menu)
 
 @dp.message_handler(text="👤 Обо мне")
-async def about_me(message: types.Message):
-    await message.answer("👤 Мой Telegram:\n@ego_njw")
+async def about(message: types.Message):
+    await message.answer("👤 Создатель:\n@ego_njw")
 
 # --- Назад ---
 @dp.message_handler(text="⬅️ Назад")
 async def back(message: types.Message):
     await message.answer("Главное меню:", reply_markup=main_menu)
 
-# --- Пустые кнопки ---
+# --- Кнопки ПУСТО ---
 @dp.message_handler(lambda m: m.text.startswith("Пусто"))
-async def empty_buttons(message: types.Message):
+async def empty(message: types.Message):
     texts = {
-        "Пусто 1": "СЮДА ВСТАВИШЬ СКРИПТ 1",
-        "Пусто 2": "СЮДА ВСТАВИШЬ СКРИПТ 2",
-        "Пусто 3": "СЮДА ВСТАВИШЬ СКРИПТ 3",
-        "Пусто 4": "СЮДА ВСТАВИШЬ СКРИПТ 4",
-        "Пусто 5": "СЮДА ВСТАВИШЬ СКРИПТ 5",
-        "Пусто 6": "СЮДА ВСТАВИШЬ СКРИПТ 6",
+        "Пусто 1": "ТЕКСТ СКРИПТА 1",
+        "Пусто 2": "ТЕКСТ СКРИПТА 2",
+        "Пусто 3": "ТЕКСТ СКРИПТА 3",
+        "Пусто 4": "ТЕКСТ СКРИПТА 4",
+        "Пусто 5": "ТЕКСТ СКРИПТА 5",
+        "Пусто 6": "ТЕКСТ СКРИПТА 6",
     }
     await message.answer(texts.get(message.text, "Пусто"))
+
+# --- Уведомление админу при старте ---
+@dp.message_handler(commands=["admin"])
+async def admin(message: types.Message):
+    if message.from_user.id == ADMIN_ID:
+        await message.answer("✅ Админ доступ подтверждён")
+    else:
+        await message.answer("⛔ Нет доступа")
 
 if __name__ == "__main__":
     executor.start_polling(dp, skip_updates=True)
