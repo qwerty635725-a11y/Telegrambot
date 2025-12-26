@@ -1,19 +1,15 @@
 import os
 import subprocess
 import tempfile
-import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, CallbackQueryHandler,
-    MessageHandler, ContextTypes, filters
-)
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
 
 TOKEN = os.getenv("BOT_TOKEN")
 
 user_lang = {}
 last_message = {}
 
-# ---------- КНОПКИ ----------
+# ------------------- КНОПКИ -------------------
 
 MAIN_MENU = InlineKeyboardMarkup([
     [InlineKeyboardButton("🧠 Компилятор", callback_data="compiler")],
@@ -41,16 +37,16 @@ HELLO_CODES = {
     "malbolge": "(=<`#9]~6ZY32Vx/4Rs+0No-&Jk)\"Fh}|Bcy?`=*z]Kw%oG4UUS0/@-e+"
 }
 
-# ---------- ВСПОМОГАТЕЛЬНЫЕ ----------
+# ------------------- HELPERS -------------------
 
 async def edit(update, text, keyboard=None):
     chat = update.effective_chat.id
     try:
-        msg_id = last_message.get(chat)
-        if msg_id:
+        mid = last_message.get(chat)
+        if mid:
             await update.get_bot().edit_message_text(
                 chat_id=chat,
-                message_id=msg_id,
+                message_id=mid,
                 text=text,
                 reply_markup=keyboard,
                 parse_mode="Markdown"
@@ -67,13 +63,11 @@ async def edit(update, text, keyboard=None):
     last_message[chat] = msg.message_id
 
 
-# ---------- СТАРТ ----------
+# ------------------- HANDLERS -------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await edit(update, "👋 *Добро пожаловать!*\n\nВыбери действие:", MAIN_MENU)
+    await edit(update, "👋 *Добро пожаловать!*\nВыбери действие:", MAIN_MENU)
 
-
-# ---------- МЕНЮ ----------
 
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -83,7 +77,7 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await edit(update, "🧠 Выбери язык:", COMPILER_MENU)
 
     elif q.data == "hello":
-        await edit(update, "🌍 Hello World примеры:", HELLO_MENU)
+        await edit(update, "🌍 Hello World:", HELLO_MENU)
 
     elif q.data == "about":
         await edit(update, "👨‍💻 Создатель: @ego_njw\n\n🤖 Telegram Compiler Bot")
@@ -93,18 +87,18 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif q.data in ["python", "cpp", "js"]:
         user_lang[q.from_user.id] = q.data
-        await edit(update, f"✍️ Напиши код для {q.data.upper()}")
+        await edit(update, f"✍️ Напиши код на *{q.data.upper()}*")
 
     elif q.data in HELLO_CODES:
-        await edit(update, f"```{HELLO_CODES[q.data]}```")
+        await edit(update, f"```{HELLO_CODES[q.data]}```", InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅ Назад", callback_data="back")]
+        ]))
 
-
-# ---------- КОМПИЛЯЦИЯ ----------
 
 async def run_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    code = update.message.text
     lang = user_lang.get(uid)
+    code = update.message.text
 
     if not lang:
         return
@@ -136,7 +130,7 @@ async def run_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await edit(update, f"❌ Ошибка: {e}")
 
 
-# ---------- MAIN ----------
+# ------------------- MAIN -------------------
 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
