@@ -1,12 +1,19 @@
-import os, subprocess, tempfile
+import os
+import subprocess
+import tempfile
+import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, CallbackQueryHandler,
+    MessageHandler, ContextTypes, filters
+)
 
 TOKEN = os.getenv("BOT_TOKEN")
 
 user_lang = {}
+last_message = {}
 
-# -------------------- MENUS --------------------
+# ---------- КНОПКИ ----------
 
 MAIN_MENU = InlineKeyboardMarkup([
     [InlineKeyboardButton("🧠 Компилятор", callback_data="compiler")],
@@ -28,115 +35,113 @@ HELLO_MENU = InlineKeyboardMarkup([
     [InlineKeyboardButton("⬅ Назад", callback_data="back")]
 ])
 
-HELLO_TEXTS = {
+HELLO_CODES = {
     "brainfuck": "++++++++++[>+++++++>++++++++++>+++>+<<<<-]>.>++.+++++++..+++.>++.<<+++++++++++++++.>.+++.------.--------.>+.>.",
-    "chef": """Hello World Souffle.
-
-Ingredients.
-72 g haricot beans
-101 eggs
-108 g lard
-111 cups oil
-32 zucchinis
-119 ml water
-114 g red salmon
-100 g dijon mustard
-
-Method.
-Put everything into the mixing bowl.
-Liquefy.
-Pour into baking dish.
-
-Serves 1.""",
+    "chef": "Hello World Souffle.\n\nIngredients.\n72 g haricot beans\n101 eggs\n108 g lard\n111 cups oil\n32 zucchinis\n119 ml water\n114 g red salmon\n100 g dijon mustard\n\nMethod.\nMix all.\nServe.",
     "malbolge": "(=<`#9]~6ZY32Vx/4Rs+0No-&Jk)\"Fh}|Bcy?`=*z]Kw%oG4UUS0/@-e+"
 }
 
-# -------------------- START --------------------
+# ---------- ВСПОМОГАТЕЛЬНЫЕ ----------
+
+async def edit(update, text, keyboard=None):
+    chat = update.effective_chat.id
+    try:
+        msg_id = last_message.get(chat)
+        if msg_id:
+            await update.get_bot().edit_message_text(
+                chat_id=chat,
+                message_id=msg_id,
+                text=text,
+                reply_markup=keyboard,
+                parse_mode="Markdown"
+            )
+            return
+    except:
+        pass
+
+    msg = await update.effective_chat.send_message(
+        text=text,
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
+    last_message[chat] = msg.message_id
+
+
+# ---------- СТАРТ ----------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message:
-        await update.message.reply_photo(
-            photo=open("start.jpg", "rb"),
-            caption="Добро пожаловать!\nВыбери действие:",
-            reply_markup=MAIN_MENU
-        )
+    await edit(update, "👋 *Добро пожаловать!*\n\nВыбери действие:", MAIN_MENU)
 
-# -------------------- MENU HANDLER --------------------
 
-async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ---------- МЕНЮ ----------
+
+async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
     if q.data == "compiler":
-        await q.message.edit_text("Выбери язык:", reply_markup=COMPILER_MENU)
+        await edit(update, "🧠 Выбери язык:", COMPILER_MENU)
 
     elif q.data == "hello":
-        await q.message.edit_text("Hello World примеры:", reply_markup=HELLO_MENU)
+        await edit(update, "🌍 Hello World примеры:", HELLO_MENU)
 
     elif q.data == "about":
-        await q.message.edit_text(
-            "👨‍💻 Создатель: @ego_njw\n"
-            "🤖 Telegram Compiler Bot\n"
-            "⚙️ Sandbox + безопасность"
-        )
+        await edit(update, "👨‍💻 Создатель: @ego_njw\n\n🤖 Telegram Compiler Bot")
 
     elif q.data == "back":
-        await q.message.edit_text("Главное меню:", reply_markup=MAIN_MENU)
+        await edit(update, "Главное меню:", MAIN_MENU)
 
     elif q.data in ["python", "cpp", "js"]:
         user_lang[q.from_user.id] = q.data
-        await q.message.reply_text(f"Язык выбран: {q.data.upper()}\nОтправь код.")
+        await edit(update, f"✍️ Напиши код для {q.data.upper()}")
 
-    elif q.data in HELLO_TEXTS:
-        await q.message.reply_text(f"```{HELLO_TEXTS[q.data]}```", parse_mode="Markdown")
+    elif q.data in HELLO_CODES:
+        await edit(update, f"```{HELLO_CODES[q.data]}```")
 
-# -------------------- CODE EXECUTION --------------------
 
-def safe_run(cmd):
-    return subprocess.run(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=3
-    )
+# ---------- КОМПИЛЯЦИЯ ----------
 
 async def run_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    lang = user_lang.get(uid)
     code = update.message.text
+    lang = user_lang.get(uid)
 
     if not lang:
         return
 
+    await edit(update, "⏳ Выполняется...")
+
     try:
         if lang == "python":
-            r = safe_run(["python3", "-c", code])
+            r = subprocess.run(["python3", "-c", code], capture_output=True, text=True, timeout=3)
 
         elif lang == "js":
-            r = safe_run(["node", "-e", code])
+            r = subprocess.run(["node", "-e", code], capture_output=True, text=True, timeout=3)
 
         elif lang == "cpp":
-            with tempfile.TemporaryDirectory() as t:
-                cpp = f"{t}/main.cpp"
-                exe = f"{t}/a.out"
-                open(cpp, "w").write(code)
-                c = safe_run(["g++", cpp, "-o", exe])
+            with tempfile.TemporaryDirectory() as d:
+                src = f"{d}/a.cpp"
+                exe = f"{d}/a.out"
+                open(src, "w").write(code)
+                c = subprocess.run(["g++", src, "-o", exe], capture_output=True, text=True)
                 if c.returncode != 0:
-                    return await update.message.reply_text(c.stderr)
-                r = safe_run([exe])
+                    await edit(update, f"❌ Ошибка компиляции:\n{c.stderr}")
+                    return
+                r = subprocess.run([exe], capture_output=True, text=True)
 
-        await update.message.reply_text(r.stdout or r.stderr or "Нет вывода")
+        await edit(update, f"✅ Результат:\n```\n{r.stdout or r.stderr}\n```",
+                   InlineKeyboardMarkup([[InlineKeyboardButton("⬅ Назад", callback_data="back")]]))
 
     except Exception as e:
-        await update.message.reply_text(f"Ошибка: {e}")
+        await edit(update, f"❌ Ошибка: {e}")
 
-# -------------------- MAIN --------------------
+
+# ---------- MAIN ----------
 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(menu_handler))
+    app.add_handler(CallbackQueryHandler(menu))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, run_code))
     app.run_polling()
 
