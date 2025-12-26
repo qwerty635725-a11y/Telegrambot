@@ -1,7 +1,6 @@
 import os
 import subprocess
 import tempfile
-
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -12,129 +11,153 @@ from telegram.ext import (
     filters
 )
 
-# 🔐 берём токен из Railway Variables
 TOKEN = os.getenv("BOT_TOKEN")
 
-if not TOKEN:
-    raise RuntimeError("BOT_TOKEN не найден в переменных окружения")
+LANGS = {
+    "python": "🐍 Python",
+    "js": "🟨 JavaScript",
+    "cpp": "⚙️ C++",
+    "csharp": "💎 C#",
+    "brainfuck": "🧠 Brainfuck"
+}
+
+HELLO = {
+    "python": 'print("Hello, World!")',
+    "js": 'console.log("Hello, World!")',
+    "cpp": '#include <iostream>\nint main(){std::cout<<"Hello, World!";}',
+    "csharp": 'using System; class P{static void Main(){Console.WriteLine("Hello, World!");}}',
+    "brainfuck": '++++++++++[>+++++++>++++++++++>+++>+<<<<-]>.>++.+++++++..+++.>++.<<+++++++++++++++.>.+++.------.--------.>+.>.'
+}
 
 user_lang = {}
 
-MAX_CODE_LENGTH = 2000
-TIMEOUT = 3
+# ---------- Brainfuck ----------
+def run_brainfuck(code):
+    tape = [0] * 30000
+    ptr = 0
+    out = ""
+    i = 0
+    stack = []
 
-FORBIDDEN = [
-    "import os", "import sys", "subprocess",
-    "open(", "exec", "eval", "__",
-    "fork", "while True"
-]
+    while i < len(code):
+        c = code[i]
+        if c == ">": ptr = (ptr + 1) % 30000
+        elif c == "<": ptr = (ptr - 1) % 30000
+        elif c == "+": tape[ptr] = (tape[ptr] + 1) % 256
+        elif c == "-": tape[ptr] = (tape[ptr] - 1) % 256
+        elif c == ".":
+            out += chr(tape[ptr])
+        elif c == "[":
+            if tape[ptr] == 0:
+                depth = 1
+                while depth:
+                    i += 1
+                    if code[i] == "[": depth += 1
+                    elif code[i] == "]": depth -= 1
+            else:
+                stack.append(i)
+        elif c == "]":
+            if tape[ptr] != 0:
+                i = stack[-1]
+            else:
+                stack.pop()
+        i += 1
+    return out
 
-# /start
+
+# ---------- BOT HANDLERS ----------
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [
-            InlineKeyboardButton("🐍 Python", callback_data="python"),
-            InlineKeyboardButton("🟨 JavaScript", callback_data="js"),
-        ],
-        [
-            InlineKeyboardButton("⚙️ C++", callback_data="cpp")
-        ]
-    ]
-
+    kb = [[InlineKeyboardButton(v, callback_data=k)] for k, v in LANGS.items()]
     await update.message.reply_text(
         "Выбери язык программирования:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        reply_markup=InlineKeyboardMarkup(kb)
     )
 
-# выбор языка
-async def choose_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
 
-    user_lang[query.from_user.id] = query.data
+async def select_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    user_lang[q.from_user.id] = q.data
 
-    await query.message.reply_text(
-        f"✅ Язык выбран: {query.data.upper()}\nТеперь отправь код."
+    await q.message.reply_text(
+        f"Выбран язык: {LANGS[q.data]}\n\n"
+        f"Напиши код или нажми /hello"
     )
 
-def is_safe(code: str) -> bool:
-    if len(code) > MAX_CODE_LENGTH:
-        return False
-    return not any(bad in code for bad in FORBIDDEN)
 
-# выполнение кода
+async def hello(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    lang = user_lang.get(uid)
+    if not lang:
+        return await update.message.reply_text("Сначала выбери язык /start")
+
+    await update.message.reply_text(f"```{HELLO[lang]}```", parse_mode="Markdown")
+
+
 async def run_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
+    uid = update.effective_user.id
     code = update.message.text
-    lang = user_lang.get(user_id)
+    lang = user_lang.get(uid)
 
     if not lang:
-        await update.message.reply_text("❗ Сначала выбери язык через /start")
-        return
-
-    if not is_safe(code):
-        await update.message.reply_text("⛔ Код отклонён (опасный или слишком большой)")
-        return
+        return await update.message.reply_text("Сначала выбери язык /start")
 
     try:
         if lang == "python":
-            result = subprocess.run(
+            p = subprocess.run(
                 ["python3", "-c", code],
                 capture_output=True,
                 text=True,
-                timeout=TIMEOUT
+                timeout=3
             )
 
         elif lang == "js":
-            result = subprocess.run(
+            p = subprocess.run(
                 ["node", "-e", code],
                 capture_output=True,
                 text=True,
-                timeout=TIMEOUT
+                timeout=3
             )
 
         elif lang == "cpp":
             with tempfile.TemporaryDirectory() as tmp:
-                cpp = os.path.join(tmp, "main.cpp")
-                exe = os.path.join(tmp, "a.out")
+                cpp = f"{tmp}/a.cpp"
+                exe = f"{tmp}/a.out"
+                open(cpp, "w").write(code)
+                c = subprocess.run(["g++", cpp, "-o", exe], capture_output=True, text=True)
+                if c.returncode != 0:
+                    return await update.message.reply_text(c.stderr)
+                p = subprocess.run([exe], capture_output=True, text=True)
 
-                with open(cpp, "w") as f:
-                    f.write(code)
-
-                compile = subprocess.run(
-                    ["g++", cpp, "-O2", "-o", exe],
+        elif lang == "csharp":
+            with tempfile.TemporaryDirectory() as tmp:
+                cs = f"{tmp}/Program.cs"
+                open(cs, "w").write(code)
+                p = subprocess.run(
+                    ["dotnet", "run", "--project", tmp],
                     capture_output=True,
-                    text=True,
-                    timeout=TIMEOUT
+                    text=True
                 )
 
-                if compile.returncode != 0:
-                    await update.message.reply_text("❌ Ошибка компиляции:\n" + compile.stderr)
-                    return
+        elif lang == "brainfuck":
+            out = run_brainfuck(code)
+            return await update.message.reply_text(out or "Пусто")
 
-                result = subprocess.run(
-                    [exe],
-                    capture_output=True,
-                    text=True,
-                    timeout=TIMEOUT
-                )
+        await update.message.reply_text(p.stdout or p.stderr or "Нет вывода")
 
-        output = result.stdout or result.stderr or "Нет вывода"
-        await update.message.reply_text(f"📤 Результат:\n{output}")
-
-    except subprocess.TimeoutExpired:
-        await update.message.reply_text("⏱ Превышено время выполнения")
     except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка: {e}")
+        await update.message.reply_text(f"Ошибка: {e}")
+
 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
-
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(choose_lang))
+    app.add_handler(CommandHandler("hello", hello))
+    app.add_handler(CallbackQueryHandler(select_lang))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, run_code))
-
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
